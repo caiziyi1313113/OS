@@ -143,9 +143,6 @@ kmem_cache_free(void *obj) {
     // 如果原来是部分空闲且仍然是部分空闲，则不做任何操作
 }
 
-#define KMALLOC_MAX_SHIFT (PGSHIFT - 1) // 对于4KB页面，最大对象大小是2KB
-#define KMALLOC_MIN_SHIFT 3             // 最小对象大小是8字节
-
 static struct kmem_cache *kmalloc_caches[KMALLOC_MAX_SHIFT + 1];
 
 // 辅助函数：为给定大小找到正确的缓存索引
@@ -196,12 +193,51 @@ void kfree(void *ptr) {
     if (ptr == NULL) {
         return;
     }
+
+    // 检查是否是大分配（直接来自buddy分配器）
     struct Page *page = pa2page((uintptr_t)ptr - PHYSICAL_MEMORY_OFFSET);
-    if (page->cache != NULL) {
-        // 这个指针是从slab缓存分配的
-        kmem_cache_free(ptr);
-    } else {
-        // 这个指针是直接从buddy系统分配的
+    if (page->cache == NULL) {
+        // 这是一个大分配，直接释放给buddy分配器
         free_pages(page, page->property);
+        return;
     }
+
+    // 这是一个slab分配，使用slab释放
+    kmem_cache_free(ptr);
+}
+
+// 测试辅助函数实现（仅用于测试）
+struct kmem_cache *get_kmalloc_cache(size_t index) {
+    if (index <= KMALLOC_MAX_SHIFT) {
+        return kmalloc_caches[index];
+    }
+    return NULL;
+}
+
+size_t get_cache_objects_per_slab(struct kmem_cache *cache) {
+    if (cache == NULL) {
+        return 0;
+    }
+    return cache->objects_per_slab;
+}
+
+bool is_list_empty_slabs_full(struct kmem_cache *cache) {
+    if (cache == NULL) {
+        return true;
+    }
+    return list_empty(&(cache->slabs_full));
+}
+
+bool is_list_empty_slabs_partial(struct kmem_cache *cache) {
+    if (cache == NULL) {
+        return true;
+    }
+    return list_empty(&(cache->slabs_partial));
+}
+
+bool is_list_empty_slabs_free(struct kmem_cache *cache) {
+    if (cache == NULL) {
+        return true;
+    }
+    return list_empty(&(cache->slabs_free));
 }
