@@ -74,8 +74,9 @@ best_fit_init_memmap(struct Page *base, size_t n) {
         assert(PageReserved(p));
         /*LAB2 EXERCISE 2: YOUR CODE*/ 
         // 清空当前页框的标志和属性信息，并将页框的引用计数设置为0
-
-
+        //初始化每个页
+        p->flags = p->property = 0;
+        set_page_ref(p, 0);
     }
     base->property = n;
     SetPageProperty(base);
@@ -90,46 +91,87 @@ best_fit_init_memmap(struct Page *base, size_t n) {
             // 编写代码
             // 1、当base < page时，找到第一个大于base的页，将base插入到它前面，并退出循环
             // 2、当list_next(le) == &free_list时，若已经到达链表结尾，将base插入到链表尾部
-
-
+            if (base < page) {
+                list_add_before(le, &(base->page_link));
+                break;
+            }
+            //如果全部块地址都比base小,则放在最后
+            else if (list_next(le) == &free_list) {
+                list_add(le, &(base->page_link));
+            }
         }
     }
 }
 
 static struct Page *
 best_fit_alloc_pages(size_t n) {
+    //1.准备工作
+    
+    //防止非法参数（assert() 是一个 断言（assertion）函数，若不满足程序，程序打印错误信息终止执行）
     assert(n > 0);
+    //请求页大于空闲页直接返回
     if (n > nr_free) {
         return NULL;
     }
+    //记录当前找到的最佳块（最小但足够用）
     struct Page *page = NULL;
+    //用于遍历链表
     list_entry_t *le = &free_list;
+
+    //保存当前已找到的最小合适块大小
+    //初始化为一个不可能的最大值（nr_free + 1）。
     size_t min_size = nr_free + 1;
+    
     /*LAB2 EXERCISE 2: YOUR CODE*/ 
     // 下面的代码是first-fit的部分代码，请修改下面的代码改为best-fit
     // 遍历空闲链表，查找满足需求的空闲页框
     // 如果找到满足需求的页面，记录该页面以及当前找到的最小连续空闲页框数量
 
+    //2.遍历链表（双向链表所以不应该指向头指针，否则就是循环一遍了）
     while ((le = list_next(le)) != &free_list) {
+
+        //使用宏，将链表节点转换为 Page 结构指针。
         struct Page *p = le2page(le, page_link);
+
+        // 这个块够大才考虑
         if (p->property >= n) {
-            page = p;
-            break;
+            // 若这是第一个合适的块，或比当前最小块还小，则进行记录
+            if (p->property < min_size) {
+                min_size = p->property;
+                page = p;
+            }
         }
     }
-
+    //3.遍历完成后使用最合适的块进行分配
     if (page != NULL) {
+        
+        //记录移除的块的前一个节点，用于后面可能的“分裂”操作。
         list_entry_t* prev = list_prev(&(page->page_link));
+        
+        //从空闲链表中移除该块，表示它不再完全空闲。
         list_del(&(page->page_link));
+
+        //如果移除块大于需要的内容空间，则进行分裂
         if (page->property > n) {
+
+            //指向甚于部分的起始页
             struct Page *p = page + n;
+
+            //将剩余块的起始页进行标注
+            //设置剩余块的长度
             p->property = page->property - n;
+            //标注这个块是空闲的
             SetPageProperty(p);
+
+            //将拆分后的新块接入到空闲链表，即之前块前一节点的尾部
             list_add(prev, &(p->page_link));
         }
+        //系统空闲页总数减少 n
         nr_free -= n;
+        //标记该块已分配，不再是空闲块。
         ClearPageProperty(page);
     }
+    //返回分配到的块的起点
     return page;
 }
 
@@ -145,7 +187,9 @@ best_fit_free_pages(struct Page *base, size_t n) {
     /*LAB2 EXERCISE 2: YOUR CODE*/ 
     // 编写代码
     // 具体来说就是设置当前页块的属性为释放的页块数、并将当前页块标记为已分配状态、最后增加nr_free的值
-
+    base->property = n;
+    SetPageProperty(base);
+    nr_free += n;
 
     if (list_empty(&free_list)) {
         list_add(&free_list, &(base->page_link));
@@ -172,7 +216,12 @@ best_fit_free_pages(struct Page *base, size_t n) {
         // 3、清除当前页块的属性标记，表示不再是空闲页块
         // 4、从链表中删除当前页块
         // 5、将指针指向前一个空闲页块，以便继续检查合并后的连续空闲页块
-
+        if (p + p->property == base) {
+            p->property += base->property;
+            ClearPageProperty(base);
+            list_del(&(base->page_link));
+            base = p;
+        }
     }
 
     le = list_next(&(base->page_link));
