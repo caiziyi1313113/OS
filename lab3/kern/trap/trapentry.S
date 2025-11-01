@@ -2,8 +2,12 @@
 
     .macro SAVE_ALL
 
+    # 把当前的 栈指针（sp） 保存到 sscratch，之后返回时能恢复原来的栈位置
     csrw sscratch, sp
-
+ 
+    # 一共要保存 36 个寄存器（32 个通用寄存器 + 4 个 CSR），每个是REGBYTES大小
+    # 在当前栈上向下开辟 36 个寄存器大小的空间，用来存放 trapframe
+    # sp → 指向 trapframe 底部
     addi sp, sp, -36 * REGBYTES
     # save x registers
     STORE x0, 0*REGBYTES(sp)
@@ -41,14 +45,24 @@
     # get sr, epc, badvaddr, cause
     # Set sscratch register to 0, so that if a recursive exception
     # occurs, the exception vector knows it came from the kernel
+    # csrrw作用是读写 CSR 寄存器
+
+    #读取 sscratch 的值到 s0，同时把 x0（值为 0）写回 sscratch。
     csrrw s0, sscratch, x0
+    # 读取 S 模式状态寄存器 sstatus，包含中断使能位SIE，上次特权级SPP，权限切换状态等
     csrr s1, sstatus
+    # 读取 异常返回地址寄存器
     csrr s2, sepc
 
     #这里有一个寄存器名字的修改
+    # 与异常相关的“附加信息”
+    # 如果是指令异常：保存出错的指令地址；果是访存异常：保存出错的虚拟地址；如果是非法指令：保存触发的非法指令本身
     csrr s3, stval
+    # 读取异常原因寄存器，最高位是0，是异常，最高位是1，是中断！
     csrr s4, scause
 
+    # 保存这些 存储着CSR 寄存器值的寄存器到 trapframe
+    # 所以目前sp指向的是trapframe 底部
     STORE s0, 2*REGBYTES(sp)
     STORE s1, 32*REGBYTES(sp)
     STORE s2, 33*REGBYTES(sp)
@@ -96,6 +110,7 @@
     LOAD x30, 30*REGBYTES(sp)
     LOAD x31, 31*REGBYTES(sp)
     # restore sp last
+    # 最后恢复 sp，x2中存储上下文切换前栈帧顶部位置
     LOAD x2, 2*REGBYTES(sp)
     .endm
 
@@ -113,4 +128,5 @@ __alltraps:
 __trapret:
     RESTORE_ALL
     # return from supervisor call
+    # 执行 sret：CPU 从 sepc 返回到异常前的指令处， sp 回到原来的栈位置，恢复之前的状态
     sret

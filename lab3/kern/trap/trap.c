@@ -153,7 +153,7 @@ void interrupt_handler(struct trapframe *tf) {
             }
 
             // 4) 打印到第 10 次时关机
-            if (num == 10) {
+            if (ticks == 1000) {
                 sbi_shutdown();
             }
 
