@@ -212,20 +212,28 @@ void proc_run(struct proc_struct *proc)
          *   lsatp():                   Modify the value of satp register
          *   switch_to():              Context switching between two processes
          */
+        // 1. 禁用中断，确保上下文切换的原子性
         bool intr_flag;
-        local_intr_save(intr_flag);           // 关中断，保证切换原子性
+        local_intr_save(intr_flag);
 
+        // 2. 更新 current 指针
         struct proc_struct *prev = current;
         current = proc;
 
-        // 切换页表（riscv：加载 satp 为新进程页表根；pgdir 已是物理地址）
-        lsatp(proc->pgdir);                   // 如果你的平台需要 MAKE_SATP，可改成 lsatp(MAKE_SATP(proc->pgdir))
-        // riscv 切换 satp 会隐式刷新 TLB；若你有 sfence.vma 宏，也可在此调用。
+        // 3. 如果新进程有独立的地址空间（mm != NULL），则切换页表
+        // 在 RISC-V 中，这通过修改 satp 寄存器来实现。
+        if (current->mm) {
+            lsatp(current->pgdir);
+        }
 
-        // 上下文切换（只需切被调用者保存寄存器）
-        switch_to(&(prev->context), &(proc->context));
+        // 4. 执行上下文切换
+        // switch_to 会将 prev 的上下文保存到 prev->context，
+        // 并从 current->context 恢复上下文，跳转到 current 之前暂停的位置。
+        switch_to(&(prev->context), &(current->context));
 
-        local_intr_restore(intr_flag);        // 开中断
+        // 5. 恢复中断状态
+        local_intr_restore(intr_flag);
+
     }
 }
 
@@ -431,13 +439,16 @@ init_main(void *arg)
 void proc_init(void)
 {
     int i;
-
+    //初始化进程管理结构
+    //pro_list全局进程链表，用于链接系统中所有进程控制块
+    //hash—list哈希链表数组，根据进程ID快速查找进程控制块
     list_init(&proc_list);
     for (i = 0; i < HASH_LIST_SIZE; i++)
     {
         list_init(hash_list + i);
     }
-
+    //idleproc作为第一个内核线程，其PID为0，负责在系统空闲时运行
+    //它不会通过正常的 do_fork 流程创建，而是直接在内核启动时“手工配置”。
     if ((idleproc = alloc_proc()) == NULL)
     {
         panic("cannot alloc idleproc.\n");
@@ -465,7 +476,7 @@ void proc_init(void)
     nr_process++;
 
     current = idleproc;
-
+    //initproc 是第一个通过正常进程创建机制（do_fork）产生的线程。它负责执行高层初始化任务。
     int pid = kernel_thread(init_main, "Hello world!!", 0);
     if (pid <= 0)
     {
